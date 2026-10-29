@@ -106,7 +106,7 @@ const PropLayer = memo(function PropLayer() {
       ))}
       <div
         className="entrance-mat"
-        style={{ left: 34 * TILE, top: 55 * TILE, width: 5 * TILE, height: 2 * TILE }}
+        style={{ left: (ENTRANCE.x - 2) * TILE, top: (ENTRANCE.y - 2) * TILE, width: 5 * TILE, height: 2 * TILE }}
       >
         ENTRANCE
       </div>

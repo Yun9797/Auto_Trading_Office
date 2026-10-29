@@ -41,9 +41,10 @@
 
 ## 고칠 때 규칙
 
-1. **부서 `id` 12개는 바꾸지 마세요** — `research` `brand` `strategy1` `qa` `strategy2` `reels` `carousel` `partner` `finance` `review` `ops` `secretary`.
+1. **부서 `id` 8개는 바꾸지 마세요** — `research` `brand` `strategy1` `qa` `strategy2` `ops` `finance` `secretary`.
    엔진과 `TRADING.desk.staffId`(`<부서id>-lead`)가 이 id로 직원을 찾습니다. 이름·아이콘·설명은 자유.
-2. **부서는 12개 유지** (사무실 4열×3행 고정). **한 팀에 `rank: "lead"` 는 정확히 1명.**
+2. **부서는 8개 유지** (사무실 4열×2행 고정). **한 팀은 3명까지(방마다 책상 3개), `rank: "lead"` 는 정확히 1명.**
+   각 팀은 실제 결과를 보고합니다 — `AutoTrader.report()` (공시·증권사·전략·리스크·정산·복기).
 3. 엔진(`app/game/`, `app/trading/`)은 고쳐도 되지만, 고친 뒤 아래 검증을 꼭 하세요.
 4. 매매 숫자(익절·손절·한도·종목)는 `company.config.ts` 의 `TRADING` 에서만 바꾸세요.
 

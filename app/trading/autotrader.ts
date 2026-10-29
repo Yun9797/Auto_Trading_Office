@@ -1,6 +1,7 @@
 // 자동매매 엔진 — 버튼 한 번에 분석 → 전략 → 매수 → 감시 → 매도 → 정산
 // 브라우저 탭이 열려 있는 동안만 돈다. 탭을 닫으면 멈춘다 (보유 종목은 증권사 계좌에 그대로 남는다).
 import { TRADING } from "../../company.config";
+import type { ReportTopic } from "../game/sim";
 import type { Broker } from "./brokers";
 import { checkDisclosures } from "./disclosures";
 import { analyze, type Signal } from "./strategy";
@@ -78,6 +79,8 @@ export class AutoTrader {
   private untouchable = new Set<string>();
   /** 위험 공시가 난 종목 — 오늘은 새로 사지 않는다 */
   private newsBlocked = new Set<string>();
+  /** 사무실 팀들이 보고할 실제 결과 (공시·증권사 연결) */
+  private notes: Partial<Record<ReportTopic, string>> = {};
   private positions = new Map<string, Position>();
   private rotate = 0;
   private announced = new Set<string>();
@@ -261,6 +264,9 @@ export class AutoTrader {
       this.say("risk", `원래 계좌에 있던 ${this.untouchable.size}개 종목은 건드리지 않아요.`, "lav");
     }
     if (this.snap.capital < 50_000) throw new Error("주문 가능한 현금이 너무 적어요 (5만 원 미만)");
+    this.notes.broker =
+      `${this.broker.label} 연결 확인, 운용 자금 ${won(this.snap.capital)}.` +
+      (this.untouchable.size ? ` 원래 보유 ${this.untouchable.size}종목은 안 건드려요.` : "");
 
     this.say("analyst", `감시 종목 ${TRADING.watchlist.length}개 일봉·시세 분석 시작할게요.`);
     const signals: Signal[] = [];
@@ -304,12 +310,16 @@ export class AutoTrader {
     try {
       const result = await checkDisclosures(TRADING.watchlist.map((s) => s.code));
       if (!result.configured) {
+        this.notes.news = "DART 키가 없어서 공시 점검은 건너뛰었어요.";
         this.say("analyst", "공시 점검은 DART 키가 없어서 건너뛰어요.", "lav");
         return;
       }
       this.newsBlocked = new Set(result.hits.map((h) => h.code));
       const blocked = result.hits.map((h) => `${h.name}: ${h.title}`);
       this.update({ blocked });
+      this.notes.news = result.hits.length
+        ? `위험 공시 ${result.hits.length}종목 오늘 제외 — ${result.hits.map((h) => `${h.name}(${h.word})`).join(", ")}`
+        : `최근 ${TRADING.disclosure.lookbackDays}일 공시 ${result.total}건 확인, 위험 공시는 없어요.`;
       for (const hit of result.hits) {
         this.say("risk", `${hit.name} 공시 '${hit.title}' (${hit.word}) — 오늘은 사지 않아요.`, "lav");
       }
@@ -320,6 +330,7 @@ export class AutoTrader {
         result.hits.length ? "lav" : "mint",
       );
     } catch (error) {
+      this.notes.news = "공시 점검 실패 — 오늘은 공시 확인 없이 진행해요.";
       this.say("analyst", `공시 점검 실패 — 오늘은 공시 확인 없이 진행해요 (${error instanceof Error ? error.message : String(error)})`, "lav");
     }
   }
@@ -497,6 +508,49 @@ export class AutoTrader {
   topPick() {
     const top = this.snap.signals[0];
     return top ? `${top.name}, ${top.score}점이에요. ${top.reasons[0] ?? ""}` : "아직 점수표가 없어요.";
+  }
+
+  /** 사무실 팀이 보고할 실제 결과 한 줄 */
+  report(topic: ReportTopic): string {
+    const sells = this.snap.trades.filter((t) => t.side === "매도");
+    const signed = (value: number) => `${value >= 0 ? "+" : ""}${won(value)}`;
+    switch (topic) {
+      case "news":
+      case "broker":
+        return this.notes[topic] ?? "아직 확인 전이에요.";
+      case "strategy": {
+        const picks = this.snap.signals
+          .filter((s) => s.ma5 > s.ma20 && !this.newsBlocked.has(s.code) && !this.untouchable.has(s.code))
+          .slice(0, 3);
+        if (!picks.length) return "오늘은 상승 추세 종목이 없어서 매수 후보가 없어요.";
+        return `후보 ${picks.map((s) => `${s.name} 돌파가 ${won(s.target)}`).join(", ")}. 익절 +${TRADING.takeProfitPct}% / 손절 -${TRADING.stopLossPct}%.`;
+      }
+      case "risk": {
+        const excluded = this.newsBlocked.size + this.untouchable.size;
+        return (
+          `최대 ${TRADING.maxPositions}종목, 종목당 ${won(TRADING.maxOrderKRW)} 이하, 하루 -${TRADING.dailyLossLimitPct}%면 중단.` +
+          (excluded ? ` 제외 종목 ${excluded}개(공시 ${this.newsBlocked.size}·원래 보유 ${this.untouchable.size}).` : "")
+        );
+      }
+      case "settle": {
+        if (!sells.length) return "오늘은 체결된 매도가 없어요. 손익 0원이에요.";
+        const wins = sells.filter((t) => (t.pnl ?? 0) > 0).length;
+        return `매도 ${sells.length}건(수익 ${wins}·손실 ${sells.length - wins}), 확정 손익 ${signed(this.snap.realized)} (${pct(this.snap.pnlPct)}).`;
+      }
+      case "review": {
+        if (!sells.length) return "매매 없는 날이었어요. 조건이 안 맞으면 쉬는 것도 규칙이에요.";
+        const count = (word: string) => sells.filter((t) => t.reason.startsWith(word)).length;
+        const sorted = [...sells].sort((a, b) => (b.pnl ?? 0) - (a.pnl ?? 0));
+        const best = sorted[0];
+        const worst = sorted[sorted.length - 1];
+        const exits = `익절 ${count("익절")}·손절 ${count("손절")}·기타 정리 ${sells.length - count("익절") - count("손절")}`;
+        const range =
+          sorted.length > 1
+            ? ` 최고 ${best.name} ${signed(best.pnl ?? 0)}, 최저 ${worst.name} ${signed(worst.pnl ?? 0)}.`
+            : ` ${best.name} ${signed(best.pnl ?? 0)}.`;
+        return `${exits}.${range}` + (this.wrapReason === "손실 한도" ? " 손실 한도에 걸려 일찍 멈췄어요." : "");
+      }
+    }
   }
 
   summary() {

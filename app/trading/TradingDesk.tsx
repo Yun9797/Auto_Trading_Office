@@ -25,6 +25,8 @@ export default function TradingDesk({
   mode,
   setMode,
   onStart,
+  startLabel,
+  marketOpen,
   officeRunning,
   realConfirmed,
   setRealConfirmed,
@@ -35,6 +37,10 @@ export default function TradingDesk({
   setMode: (mode: DeskMode) => void;
   /** 사무실 하루 시작 (출근 → 분석 → … → 자동매매 → 정산) */
   onStart: () => void;
+  /** 장중엔 "매매 다시 시작", 장이 닫혀 있으면 "연습 하루 돌려보기" */
+  startLabel: string;
+  /** 장이 닫혀 있으면 증권사와 상관없이 연습 시장으로 돈다 */
+  marketOpen: boolean;
   officeRunning: boolean;
   realConfirmed: boolean;
   setRealConfirmed: (value: boolean) => void;
@@ -98,14 +104,20 @@ export default function TradingDesk({
                 </button>
               </div>
             ) : (
-              <button className="btn btn-primary" onClick={onStart} disabled={officeRunning || (isReal && !realConfirmed)}>
-                {officeRunning ? "정산·브리핑 중…" : "▶ 오늘 매매 시작하기"}
+              <button
+                className="btn btn-primary"
+                onClick={onStart}
+                disabled={officeRunning || (marketOpen && isReal && !realConfirmed)}
+              >
+                {officeRunning ? "정산·브리핑 중…" : startLabel}
               </button>
             )}
             <span className="trust-copy">
-              {mode === "sim"
-                ? "가짜 시장·가짜 돈이에요. 약 3분이면 하루 장이 끝나요."
-                : "이 탭이 열려 있는 동안만 돌아가요. 닫으면 멈춥니다."}
+              {!marketOpen
+                ? "장이 닫혀 있어서 가짜 시장·가짜 돈으로 약 3분 만에 하루를 돌려 봐요."
+                : mode === "sim"
+                  ? "가짜 시장·가짜 돈이에요. 실제 장 시간에 맞춰 돌아가요."
+                  : "이 탭이 열려 있는 동안만 돌아가요. 닫으면 멈춥니다."}
             </span>
           </div>
         </div>

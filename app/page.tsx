@@ -87,7 +87,7 @@ const subscribeClock = (listener: () => void) => {
 };
 const readClock = () => {
   const now = seoulNow();
-  return `${now.time}|${marketStatus(now)}`;
+  return `${now.time}|${marketStatus(now)}|${marketOpen(now) ? 1 : 0}`;
 };
 
 function readStore(key: string) {
@@ -155,7 +155,10 @@ export default function Home() {
   const tsnap = useSyncExternalStore(trader.subscribe, trader.getSnapshot, trader.getSnapshot);
   const tradeRunning = tsnap.running;
   const [realConfirmed, setRealConfirmed] = useState(false);
-  const [clockTime, clockStatus] = useSyncExternalStore(subscribeClock, readClock, () => "--:--|").split("|");
+  const [clockTime, clockStatus, clockOpen] = useSyncExternalStore(subscribeClock, readClock, () => "--:--||0").split("|");
+  // 장중엔 멈춘 매매를 다시 켜는 버튼, 장이 닫혀 있으면 연습 하루를 빠르게 돌려 보는 버튼
+  const isMarketOpen = clockOpen === "1";
+  const startLabel = isMarketOpen ? "▶ 매매 다시 시작" : "🧪 연습 하루 돌려보기";
 
   useEffect(() => {
     let raf = 0;
@@ -223,6 +226,7 @@ export default function Home() {
       phase: () => traderRef.current.getSnapshot().phase,
       pick: () => traderRef.current.topPick(),
       summary: () => traderRef.current.summary(),
+      report: (topic) => traderRef.current.report(topic),
     });
     return () => engine.setMarketBridge(null);
   }, [engine]);
@@ -238,14 +242,15 @@ export default function Home() {
   /** 버튼 한 번 — 전원 출근 → 분석 → 전략 → 자동매매 → 정산 → 브리핑 */
   const startDay = useCallback(() => {
     if (snap.running || tradeRunning) return;
-    if (deskMode === "kis" && kis?.mode === "real" && !realConfirmed) {
+    // 장이 닫혀 있으면 증권사 연결과 상관없이 연습 시장으로 하루를 빠르게 돌려 본다
+    const open = marketOpen(seoulNow());
+    const live = open && deskMode === "kis" && kis?.configured ? kis : null;
+    if (live?.mode === "real" && !realConfirmed) {
       setView("trading");
       showToast("실전 모드는 자동매매 탭에서 확인 체크를 먼저 해주세요");
       return;
     }
-    // 장이 열려 있으면 연습 모드도 실제 시각을 따라가고, 장이 닫혀 있으면 빠르게 하루를 돌려 본다
-    const broker =
-      deskMode === "kis" && kis?.configured ? new KisBroker(kis.mode) : new SimBroker({ live: marketOpen(seoulNow()) });
+    const broker = live ? new KisBroker(live.mode) : new SimBroker({ live: open });
     const next = new AutoTrader(broker);
     next.holdUntilRelease();
     // 트레이딩 데스크의 말 → 사무실 피드·말풍선·대표 지시창
@@ -254,15 +259,14 @@ export default function Home() {
       engine.pushLog("💹", `${desk.name}: ${text}`, tone);
       const agent = engine.agentById.get(desk.staffId);
       if (agent) engine.say(agent, text.length > 34 ? `${text.slice(0, 33)}…` : text, 3.4);
-      if (/매수 주문/.test(text)) engine.flashDept("reels", "매수 체결 확인");
-      if (/매도 —/.test(text)) engine.flashDept("carousel", "매도 체결 확인");
       if (role === "secretary" || role === "finance" || /매수 주문|매도 —/.test(text)) {
         engine.pushChat("staff", desk.name, text);
       }
     });
     traderRef.current = next;
     setTrader(next);
-    writeStore(AUTO_DAY_KEY, seoulNow().date);
+    // 장 밖 연습은 오늘 자동 출근을 막지 않는다
+    if (open) writeStore(AUTO_DAY_KEY, seoulNow().date);
     engine.start();
     setBriefing(false);
     showToast(`${broker.label} — 전원 출근, 오늘 매매를 시작해요`);
@@ -406,6 +410,8 @@ export default function Home() {
             mode={deskMode}
             setMode={setDeskMode}
             onStart={startDay}
+            startLabel={startLabel}
+            marketOpen={isMarketOpen}
             officeRunning={snap.running}
             realConfirmed={realConfirmed}
             setRealConfirmed={setRealConfirmed}
@@ -419,6 +425,7 @@ export default function Home() {
             selectedId={selectedId}
             onSelect={onSelect}
             onStart={startDay}
+            startLabel={startLabel}
             tsnap={tsnap}
             onOpenTrading={() => setView("trading")}
             onDuty={onDuty}
@@ -436,6 +443,7 @@ export default function Home() {
             setFilter={setFilter}
             snap={snap}
             onStart={startDay}
+            startLabel={startLabel}
             tsnap={tsnap}
             kis={kis}
             onSelect={(id) => setSelectedId(id)}
@@ -471,6 +479,7 @@ function LiveView({
   selectedId,
   onSelect,
   onStart,
+  startLabel,
   tsnap,
   onOpenTrading,
   onDuty,
@@ -487,6 +496,7 @@ function LiveView({
   selectedId: string | null;
   onSelect: (agent: Agent) => void;
   onStart: () => void;
+  startLabel: string;
   tsnap: TraderSnapshot;
   onOpenTrading: () => void;
   onDuty: number;
@@ -502,7 +512,7 @@ function LiveView({
     <>
       <header className="live-hero">
         <div>
-          <p className="eyebrow">LIVE TRADING OFFICE · 32 AI STAFF · {tsnap.brokerLabel}</p>
+          <p className="eyebrow">LIVE TRADING OFFICE · {STAFF.length} AI STAFF · {tsnap.brokerLabel}</p>
           <h1>
             {COMPANY.titlePrefix} <em className="highlight">{COMPANY.titleAccent}</em>
           </h1>
@@ -517,7 +527,7 @@ function LiveView({
 
       <section className="live-bar">
         <button className="btn btn-primary" onClick={onStart} disabled={snap.running}>
-          {snap.running ? "트레이딩룸 가동 중…" : snap.dayComplete ? "내일 장도 시작하기" : "▶ 오늘 매매 시작하기"}
+          {snap.running ? "트레이딩룸 가동 중…" : startLabel}
         </button>
         <span
           className="btn btn-ghost on"
@@ -529,20 +539,7 @@ function LiveView({
           {snap.paused ? "▶ 재생" : "⏸ 일시정지"}
         </button>
         <div className="speed-wrap">
-          <span className="speed-label" title="시뮬레이션 전체(걷기·업무·대사)가 함께 빨라져요. 실제 외부 작업 속도와는 무관합니다.">
-            재생 속도
-          </span>
-          <div className="speed-group" role="group" aria-label="재생 속도">
-            {[1, 2, 4].map((value) => (
-              <button
-                key={value}
-                className={!snap.turbo && snap.speed === value ? "on" : ""}
-                onClick={() => engine.setSpeed(value)}
-                title={value === 1 ? "말풍선 읽기·화면녹화용" : value === 4 ? "결과만 빠르게" : "기본"}
-              >
-                {value}x
-              </button>
-            ))}
+          <div className="speed-group">
             <button
               className={`skip ${snap.turbo ? "on" : ""}`}
               onClick={() => engine.skipToDecision()}
@@ -884,6 +881,7 @@ function DashboardView({
   setFilter,
   snap,
   onStart,
+  startLabel,
   tsnap,
   kis,
   onSelect,
@@ -896,6 +894,7 @@ function DashboardView({
   setFilter: (value: "전체" | DeptStatus) => void;
   snap: Snapshot;
   onStart: () => void;
+  startLabel: string;
   tsnap: TraderSnapshot;
   kis: KisStatus | null;
   onSelect: (id: string) => void;
@@ -955,11 +954,11 @@ function DashboardView({
             <h1>
               오늘 트레이딩룸이 어떻게 움직이는지 <em className="highlight">한눈에</em> 보여드려요
             </h1>
-            <p>규칙은 대표님, 실행은 AI. 12개 팀 32명이 분석부터 매매·정산·브리핑까지 한 흐름으로 돌려요.</p>
+            <p>규칙은 대표님, 실행은 AI. {DEPT_ROOMS.length}개 팀 {STAFF.length}명이 분석부터 매매·정산·브리핑까지 한 흐름으로 돌려요.</p>
           </div>
           <div className="hero-actions">
             <button className="btn btn-primary" onClick={onStart} disabled={snap.running}>
-              {snap.running ? "트레이딩룸 가동 중…" : "▶ 오늘 매매 시작하기"}
+              {snap.running ? "트레이딩룸 가동 중…" : startLabel}
             </button>
             <span className="trust-copy">실전(진짜 돈) 주문은 확인 체크를 한 뒤에만 나가요</span>
           </div>
@@ -969,7 +968,7 @@ function DashboardView({
       <section className="summary-grid" aria-label="오늘 업무 요약">
         <article className="metric yellow">
           <span>AI 직원</span>
-          <strong>32</strong>
+          <strong>{STAFF.length}</strong>
           <small>STAFF</small>
         </article>
         <article className="metric mint">
@@ -1055,7 +1054,9 @@ function DashboardView({
               <div className="section-heading">
                 <div>
                   <p className="eyebrow">LIVE OFFICE</p>
-                  <h2>12개 부서 · 팀장 12명 근무 현황</h2>
+                  <h2>
+                    {DEPT_ROOMS.length}개 부서 · 팀장 {DEPT_ROOMS.length}명 근무 현황
+                  </h2>
                 </div>
                 <div className="filter-tabs" role="group" aria-label="팀 상태 필터">
                   {(["전체", "진행 중", "완료", "승인 대기", "연동 대기"] as const).map((item) => (
@@ -1104,7 +1105,7 @@ function DashboardView({
                   보유 {tsnap.positions.length}종목
                 </p>
                 <button className="btn approve-button" onClick={onStart} disabled={snap.running}>
-                  {snap.running ? "자동매매 진행 중" : "▶ 오늘 매매 시작하기"}
+                  {snap.running ? "자동매매 진행 중" : startLabel}
                 </button>
               </div>
             </section>
@@ -1138,7 +1139,7 @@ function DashboardView({
                       ? "없어요. 규칙대로 돌아가는 중이에요."
                       : snap.dayComplete
                         ? "결과만 확인하시면 돼요."
-                        : "‘오늘 매매 시작하기’ 한 번만 눌러주세요."}
+                        : "없어요. 장이 열리면 알아서 출근해요."}
                   </strong>
                 </div>
               </div>
@@ -1199,7 +1200,7 @@ function DashboardView({
       </section>
 
       <p className="dash-note">
-        대표 {CEO.name}({CEO.callsign}) · AI 직원 {teams.length}개 부서 32명 · 이 화면은 라이브 오피스·자동매매와 같은
+        대표 {CEO.name}({CEO.callsign}) · AI 직원 {teams.length}개 부서 {STAFF.length}명 · 이 화면은 라이브 오피스·자동매매와 같은
         상태를 공유해요. 수익은 보장되지 않아요.
       </p>
     </>

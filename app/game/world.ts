@@ -5,7 +5,7 @@ import { DEPARTMENTS } from "../../company.config";
 
 export const TILE = 18;
 export const COLS = 74;
-export const ROWS = 58;
+export const ROWS = 45;
 export const WORLD_W = COLS * TILE;
 export const WORLD_H = ROWS * TILE;
 
@@ -36,9 +36,9 @@ export type Room = {
   loiter: Pt[];
 };
 
-/** 부서 방 배치 — 4열 3행 */
+/** 부서 방 배치 — 4열 2행 (위: 장 시작 전 준비 / 아래: 장중 매매·마감) */
 const COL_X = [2, 20, 38, 56];
-const ROW_Y = [17, 31, 45];
+const ROW_Y = [17, 31];
 const DEPT_W = 15;
 const DEPT_H = 11;
 
@@ -162,7 +162,7 @@ export const MEETING_SEATS: Pt[] = [
 export const CEO_REPORT_SPOT: Pt = { x: 11, y: 9 };
 export const CEO_SEAT: Pt = { x: 11, y: 5 };
 /** 출입구 (출근·퇴근) */
-export const ENTRANCE: Pt = { x: 36, y: 57 };
+export const ENTRANCE: Pt = { x: 36, y: ROWS - 1 };
 
 export const DEPT_ROOMS: Room[] = DEPT_LAYOUT.map((_, i) => deptRoom(i));
 export const ROOMS: Room[] = [CEO_ROOM, MEETING_ROOM, LOUNGE_ROOM, ...DEPT_ROOMS];

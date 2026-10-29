@@ -8,30 +8,30 @@
 //   1. 부서 id(research, brand, ...)는 절대 바꾸지 마세요. 시뮬레이션 엔진이
 //      이 id로 움직입니다. 바꾸면 캐릭터가 길을 잃어요.
 //      → 바꿔도 되는 건 name(부서 이름) · icon · short 입니다.
-//   2. 부서는 12개를 유지하세요. 사무실 배치가 4열 3행 = 12칸 고정입니다.
+//   2. 부서는 8개를 유지하세요. 사무실 배치가 4열 2행 = 8칸 고정입니다.
 //      안 쓰는 부서는 지우지 말고 이름만 바꿔서 쓰세요.
 //
-//  직원 수는 자유롭게 늘리고 줄여도 됩니다. 한 팀에 팀장(lead) 1명은 두세요.
+//  한 팀은 3명까지 (방마다 책상이 3개). 한 팀에 팀장(lead)은 정확히 1명.
 // ============================================================
 
 /** 회사 기본 정보 */
 export const COMPANY = {
   /** 좌측 상단 헤더에 뜨는 회사 이름 */
-  name: "AUTO B.S",
+  name: "TRADING OFFICE",
   /** 헤더 로고 배지에 들어갈 글자 1개 (이모지도 됩니다) */
-  logoLetter: "B",
+  logoLetter: "T",
   /** 화면 상단 큰 제목 (앞부분) */
-  titlePrefix: "Auto",
+  titlePrefix: "Trading",
   /** 화면 상단 큰 제목 (강조되는 뒷부분) */
-  titleAccent: "B.S Office",
+  titleAccent: "Office",
   /** 브라우저 탭 제목 */
-  pageTitle: "Auto B.S — AI 자동매매 오피스",
+  pageTitle: "Trading Office — AI 자동매매 오피스",
   /** 검색·공유될 때 뜨는 설명 */
-  description: "버튼 한 번에 12개 AI 팀이 분석·전략·매매·정산까지 돌리는 주식 자동매매 오피스",
+  description: "장이 열리면 8개 AI 팀이 분석·전략·매매·정산까지 돌리는 주식 자동매매 오피스",
   /** 창 하단 파일명 느낌의 라벨 */
-  windowLabel: "auto_bs.exe — 트레이딩룸",
+  windowLabel: "trading_office.exe — 트레이딩룸",
   /** 일일 브리핑 제목에 들어갈 이름 */
-  reportName: "Auto B.S",
+  reportName: "Trading Office",
 } as const;
 
 /** 대표(나) — 사무실 대표실에 앉아 있는 캐릭터 */
@@ -51,7 +51,7 @@ export const CEO_PROFILE = {
 };
 
 /**
- * 부서 12개.
+ * 부서 8개 (사무실 위 줄: 장 시작 전 준비 / 아래 줄: 장중 매매·마감).
  * id = 고정(엔진용) / name·short·icon = 자유롭게 변경
  * task = 오늘 하는 일 / report = 팀장 한줄보고
  */
@@ -66,11 +66,11 @@ export const DEPARTMENTS = [
   },
   {
     id: "brand",
-    name: "수급·뉴스팀",
-    short: "flow.watch",
+    name: "공시·뉴스팀",
+    short: "dart.watch",
     icon: "📰",
-    task: "거래량·수급·뉴스 이상 신호 점검",
-    report: "갑자기 튀는 종목은 따로 표시해둬요.",
+    task: "DART 공시 점검",
+    report: "위험 공시가 난 종목은 오늘 매수 후보에서 빼요.",
   },
   {
     id: "strategy1",
@@ -97,52 +97,20 @@ export const DEPARTMENTS = [
     report: "익절가·손절가 닿는 순간 바로 알려요.",
   },
   {
-    id: "reels",
-    name: "매수 데스크",
-    short: "buy.desk",
-    icon: "🟥",
-    task: "매수 체결 확인",
-    report: "체결가를 확인하고 손절·익절가를 걸어요.",
-  },
-  {
-    id: "carousel",
-    name: "매도 데스크",
-    short: "sell.desk",
-    icon: "🟦",
-    task: "매도 체결 확인",
-    report: "판 가격과 손익을 바로 기록해요.",
-  },
-  {
-    id: "partner",
-    name: "증권사 연동팀",
-    short: "broker.api",
-    icon: "🔌",
-    task: "증권사 연결·잔고 확인",
-    report: "연결 상태와 주문 가능 현금을 확인해요.",
+    id: "ops",
+    name: "주문·체결팀",
+    short: "order.desk",
+    icon: "⚡",
+    task: "증권사 연결·주문·체결 확인",
+    report: "연결 상태와 현금을 확인하고, 주문이 체결됐는지 잔고로 다시 봐요.",
   },
   {
     id: "finance",
-    name: "손익정산팀",
-    short: "pnl.xls",
+    name: "정산·복기팀",
+    short: "pnl.review",
     icon: "🧾",
-    task: "체결 내역·손익 정산",
-    report: "수수료·세금까지 빼고 진짜 손익만 적어요.",
-  },
-  {
-    id: "review",
-    name: "매매복기팀",
-    short: "review.data",
-    icon: "📈",
-    task: "오늘 매매 복기·학습점 기록",
-    report: "잘된 매매와 실수한 매매를 나눠 남겨요.",
-  },
-  {
-    id: "ops",
-    name: "주문집행팀",
-    short: "order.ops",
-    icon: "⚡",
-    task: "주문 집행·체결 확인",
-    report: "주문 실패하면 다시 확인하고 로그를 남겨요.",
+    task: "체결 내역·손익 정산과 오늘 매매 복기",
+    report: "수수료·세금까지 빼고 진짜 손익을 적고, 잘된 매매와 실수를 나눠 남겨요.",
   },
   {
     id: "secretary",
@@ -182,16 +150,16 @@ export const STAFF_LIST: StaffEntry[] = [
     colors: ["#8a4a3c", "#b8f0dd", "#ff8fc0"],
     thoughts: ["거래 적은 종목은 안 봐요.", "점수표 정렬 다시 할게요."] },
 
-  // ② 수급·뉴스팀
-  { dept: "brand", rank: "lead", name: "박보라", role: "수급·뉴스 팀장", callsign: "박수급",
+  // ② 공시·뉴스팀
+  { dept: "brand", rank: "lead", name: "박보라", role: "공시·뉴스 팀장", callsign: "박공시",
     colors: ["#372b4a", "#c9b8ff", "#c9b8ff"],
-    thoughts: ["거래량 없이 오르는 건 의심해요.", "공시 나온 종목은 한 번 더 봐요."] },
-  { dept: "brand", rank: "member", name: "신재원", role: "거래량 추적",
+    thoughts: ["유상증자 공시 나오면 바로 빼요.", "공시 나온 종목은 한 번 더 봐요."] },
+  { dept: "brand", rank: "member", name: "신재원", role: "DART 공시 조회",
     colors: ["#3c3a4f", "#ffe6f2", "#c9b8ff"],
-    thoughts: ["평소보다 거래량 3배면 표시.", "외국인이 사고 있나 볼게요."] },
-  { dept: "brand", rank: "member", name: "임다혜", role: "뉴스 체크",
+    thoughts: ["최근 4일치 공시 다 받아왔어요.", "주말 사이 나온 공시도 챙겨요."] },
+  { dept: "brand", rank: "member", name: "임다혜", role: "위험 공시 판별",
     colors: ["#5a3450", "#fff3b0", "#ff8fc0"],
-    thoughts: ["루머 기사는 근거로 안 써요.", "장 시작 전 헤드라인 정리 중."] },
+    thoughts: ["풍문 해명 공시는 위험 신호예요.", "투자경고 종목은 손 안 대요."] },
 
   // ③ 전략팀
   { dept: "strategy1", rank: "lead", name: "최아름", role: "전략 팀장", callsign: "최전략",
@@ -226,64 +194,29 @@ export const STAFF_LIST: StaffEntry[] = [
     colors: ["#5d3a2c", "#b8f0dd", "#c9b8ff"],
     thoughts: ["수익률 계속 갱신 중.", "고점 대비 얼마 빠졌지?"] },
 
-  // ⑥ 매수 데스크
-  { dept: "reels", rank: "lead", name: "송리원", role: "매수 데스크 팀장", callsign: "송매수",
+  // ⑥ 주문·체결팀
+  { dept: "ops", rank: "lead", name: "안도현", role: "주문·체결 팀장", callsign: "안주문",
+    colors: ["#3b3b49", "#b8f0dd", "#b8f0dd"],
+    thoughts: ["주문 접수번호 확인했어요.", "실패하면 다시 확인하고 로그 남겨요."] },
+  { dept: "ops", rank: "member", name: "송리원", role: "매수 체결 확인",
     colors: ["#2c2638", "#ff8fc0", "#ff8fc0"],
-    thoughts: ["체결가 확인이 먼저예요.", "신호 없으면 안 사요."] },
-  { dept: "reels", rank: "member", name: "권지호", role: "매수 체결 확인",
-    colors: ["#4a3a2a", "#fff3b0", "#b8f0dd"],
-    thoughts: ["시장가 체결 슬리피지 체크.", "수량 맞는지 다시 확인."] },
-  { dept: "reels", rank: "member", name: "유세아", role: "매수 기록",
-    colors: ["#7a3f58", "#c9b8ff", "#ff8fc0"],
-    thoughts: ["매수 시각 기록해둘게요.", "손절가 같이 적어둬요."] },
-
-  // ⑦ 매도 데스크
-  { dept: "carousel", rank: "lead", name: "이가림", role: "매도 데스크 팀장", callsign: "이매도",
-    colors: ["#d88d68", "#c9b8ff", "#c9b8ff"],
-    thoughts: ["팔 땐 망설이지 않아요.", "익절이든 손절이든 규칙대로."] },
-  { dept: "carousel", rank: "member", name: "남주하", role: "매도 체결 확인",
-    colors: ["#3a2f4d", "#ffe6f2", "#ff8fc0"],
-    thoughts: ["매도 수량 전부 나갔나 확인.", "미체결 남으면 바로 보고."] },
-  { dept: "carousel", rank: "member", name: "표하늘", role: "손익 기록",
-    colors: ["#274a44", "#fff3b0", "#b8f0dd"],
-    thoughts: ["세금·수수료 빼고 적어요.", "손실도 숨기지 않고 기록."] },
-
-  // ⑧ 증권사 연동팀
-  { dept: "partner", rank: "lead", name: "정파랑", role: "증권사 연동 팀장", callsign: "정연동",
+    thoughts: ["체결가 확인이 먼저예요.", "수량 맞는지 다시 확인."] },
+  { dept: "ops", rank: "member", name: "정파랑", role: "증권사 연결·매도 체결",
     colors: ["#563a32", "#b8f0dd", "#b8f0dd"],
     thoughts: ["키 없으면 연습 시장으로 돌려요.", "연결 안 된 걸 됐다고 안 해요."] },
-  { dept: "partner", rank: "member", name: "구예성", role: "API 모니터링",
-    colors: ["#452d3f", "#c9b8ff", "#fff3b0"],
-    thoughts: ["호출 간격 지켜야 안 막혀요.", "토큰 만료 시간 체크."] },
 
-  // ⑨ 손익정산팀
-  { dept: "finance", rank: "lead", name: "오재민", role: "손익정산 팀장", callsign: "오정산",
+  // ⑦ 정산·복기팀
+  { dept: "finance", rank: "lead", name: "오재민", role: "정산·복기 팀장", callsign: "오정산",
     colors: ["#313b56", "#fff3b0", "#fff3b0"],
     thoughts: ["확정 손익이랑 평가 손익은 따로.", "운용 자금 대비 몇 %인지 볼게요."] },
   { dept: "finance", rank: "member", name: "심우진", role: "체결 내역 정리",
     colors: ["#4b3b2c", "#b8f0dd", "#c9b8ff"],
-    thoughts: ["체결 내역 한 줄씩 맞춰봐요.", "숫자 안 맞으면 다시 조회."] },
-
-  // ⑩ 매매복기팀
-  { dept: "review", rank: "lead", name: "강성아", role: "매매복기 팀장", callsign: "강복기",
+    thoughts: ["체결 내역 한 줄씩 맞춰봐요.", "세금·수수료 빼고 적어요."] },
+  { dept: "finance", rank: "member", name: "강성아", role: "매매 복기",
     colors: ["#9c5c72", "#ff8fc0", "#ff8fc0"],
-    thoughts: ["승률보다 손익비가 중요해요.", "손절한 이유도 기록해요."] },
-  { dept: "review", rank: "member", name: "마지훈", role: "성과 통계",
-    colors: ["#2e3a4a", "#ffe6f2", "#b8f0dd"],
-    thoughts: ["며칠치 쌓여야 의미가 있어요.", "하루 결과로 판단 안 해요."] },
-  { dept: "review", rank: "member", name: "여름", role: "학습점 정리",
-    colors: ["#6b4a2f", "#c9b8ff", "#fff3b0"],
-    thoughts: ["반복할 패턴 1개, 버릴 패턴 1개.", "규칙 바꿀 땐 모의투자부터."] },
+    thoughts: ["승률보다 손익비가 중요해요.", "하루 결과로 판단 안 해요."] },
 
-  // ⑪ 주문집행팀
-  { dept: "ops", rank: "lead", name: "안도현", role: "주문집행 팀장", callsign: "안주문",
-    colors: ["#3b3b49", "#b8f0dd", "#b8f0dd"],
-    thoughts: ["주문 접수번호 확인했어요.", "실패하면 다시 확인하고 로그 남겨요."] },
-  { dept: "ops", rank: "member", name: "천유나", role: "체결 모니터링",
-    colors: ["#573049", "#fff3b0", "#ff8fc0"],
-    thoughts: ["체결 안 된 걸 체결됐다고 안 써요.", "잔고랑 주문 수량 대조 중."] },
-
-  // ⑫ 비서실
+  // ⑧ 비서실
   { dept: "secretary", rank: "lead", name: "김세리", role: "비서실장", callsign: "김비서",
     colors: ["#7a453c", "#c9b8ff", "#c9b8ff"],
     thoughts: ["오늘 손익만 딱 정리해 드릴게요.", "중복 설명은 다 지워요."] },

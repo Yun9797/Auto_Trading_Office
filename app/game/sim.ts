@@ -117,7 +117,11 @@ export type MarketBridge = {
   pick(): string;
   /** 오늘 손익 한 줄 */
   summary(): string;
+  /** 팀별 실제 결과 한 줄 (공시·증권사·전략·리스크·정산·복기) */
+  report(topic: ReportTopic): string;
 };
+
+export type ReportTopic = "news" | "broker" | "strategy" | "risk" | "settle" | "review";
 
 type Slot = {
   gen: Generator<number | (() => boolean), void, void> | null;
@@ -152,7 +156,7 @@ const PHASES = [
   "출근 대기",
   "전사 출근",
   "시장 분석",
-  "수급·뉴스 점검",
+  "공시·증권사 점검",
   "분석 회의",
   "전략 수립",
   "리스크 점검",
@@ -177,16 +181,12 @@ const BLOCK_REASON: Record<string, string> = Object.fromEntries(
 /** 지시창에서 부서를 찾을 때 쓰는 키워드 — 구체적인 것부터 검사한다 */
 const DEPT_KEYWORDS: [string, string[]][] = [
   ["qa", ["리스크", "손절", "위험", "윤규아"]],
-  ["brand", ["수급", "뉴스", "공시", "박보라"]],
+  ["brand", ["수급", "뉴스", "공시", "dart", "박보라"]],
   ["strategy1", ["전략", "돌파", "최아름"]],
   ["strategy2", ["감시", "모니터", "한도빈"]],
   ["research", ["시장 분석", "시장분석", "분석팀", "차트", "김서연"]],
-  ["reels", ["매수 데스크", "매수팀", "송리원"]],
-  ["carousel", ["매도 데스크", "매도팀", "이가림"]],
-  ["partner", ["증권사", "연동", "api", "정파랑"]],
-  ["finance", ["정산", "손익", "수익", "오재민"]],
-  ["review", ["성과", "리뷰", "복기", "강성아"]],
-  ["ops", ["주문", "집행", "안도현"]],
+  ["finance", ["정산", "손익", "수익", "성과", "리뷰", "복기", "오재민", "강성아"]],
+  ["ops", ["주문", "집행", "체결", "매수", "매도", "증권사", "연동", "api", "안도현", "송리원", "정파랑"]],
   ["secretary", ["비서", "김세리", "비서실"]],
 ];
 
@@ -200,8 +200,8 @@ export class Company {
   deptStatus: Record<string, DeptStatus> = {};
   log: LogEntry[] = [];
   clockMinutes = 7 * 60;
-  /** 재생 속도 — 시뮬레이션 전체(걷기·업무·대사)를 함께 배속한다. 실제 외부 작업 속도와는 무관 */
-  speed = 2;
+  /** 재생 속도 — 2배속 고정. 시뮬레이션 전체(걷기·업무·대사)를 함께 배속한다. 실제 외부 작업 속도와는 무관 */
+  readonly speed = 2;
   turbo = false;
   paused = false;
   running = false;
@@ -425,13 +425,19 @@ export class Company {
     if (seoyeon) this.say(seoyeon, "분석 끝났어요. 점수표 넘길게요.", 3);
     yield 1.2;
 
-    // ③ 수급·뉴스 점검 + 증권사 연결 확인
+    // ③ 공시 점검 + 증권사 연결 확인 — 분석 때 실제로 확인한 결과를 보고한다
     this.phaseIndex = 3;
-    if (!BLOCKED_DEPTS.has("brand")) this.startDept("brand", "거래량·수급·뉴스 이상 신호 점검", 5);
-    if (!BLOCKED_DEPTS.has("partner")) this.startDept("partner", "증권사 연결·잔고 확인", 4);
+    if (!BLOCKED_DEPTS.has("brand")) this.startDept("brand", "DART 공시 점검", 4);
+    if (!BLOCKED_DEPTS.has("ops")) this.startDept("ops", "증권사 연결·잔고 확인", 4);
     yield () =>
       (BLOCKED_DEPTS.has("brand") || this.deptStatus.brand === "완료") &&
-      (BLOCKED_DEPTS.has("partner") || this.deptStatus.partner === "완료");
+      (BLOCKED_DEPTS.has("ops") || this.deptStatus.ops === "완료");
+    if (market) {
+      this.report("brand", market.report("news"));
+      yield 1.4;
+      this.report("ops", market.report("broker"));
+      yield 1.4;
+    }
 
     // ④ 분석 회의 — 분석 → 전략 → 리스크 인수인계
     this.phaseIndex = 4;
@@ -447,11 +453,21 @@ export class Company {
 
     // ⑤ 전략 수립
     this.phaseIndex = 5;
-    yield* this.runDept("strategy1", "돌파 가격·익절·손절 계산", 5, "종목별 돌파가·익절가·손절가 다 뽑았어요.");
+    yield* this.runDept(
+      "strategy1",
+      "돌파 가격·익절·손절 계산",
+      5,
+      market?.report("strategy") ?? "종목별 돌파가·익절가·손절가 다 뽑았어요.",
+    );
 
     // ⑥ 리스크 점검
     this.phaseIndex = 6;
-    yield* this.runDept("qa", "종목 수·금액 한도·손실 한도 점검", 4.5, "한도 설정 끝. 원래 보유 종목은 안 건드려요.");
+    yield* this.runDept(
+      "qa",
+      "종목 수·금액 한도·손실 한도 점검",
+      4.5,
+      market?.report("risk") ?? "한도 설정 끝. 원래 보유 종목은 안 건드려요.",
+    );
 
     // ⑦ 장 시작 대기 → ⑧ 자동매매 진행 (매매가 끝날 때까지 감시·주문 데스크가 붙어 있다)
     this.phaseIndex = 7;
@@ -473,11 +489,19 @@ export class Company {
     this.pushLog("🔔", "매매 종료 — 데스크 정리합니다.", "lav");
     yield 1.2;
 
-    // ⑩ 손익 정산 + 복기
+    // ⑩ 손익 정산 + 복기 — 실제 체결 기록으로 계산한다
     this.phaseIndex = 10;
-    if (!BLOCKED_DEPTS.has("finance")) this.startDept("finance", "체결 내역·손익 정산", 5);
-    this.startDept("review", "오늘 매매 복기·학습점 기록", 5);
-    yield () => (BLOCKED_DEPTS.has("finance") || this.deptStatus.finance === "완료") && this.deptStatus.review === "완료";
+    if (!BLOCKED_DEPTS.has("finance")) {
+      this.startDept("finance", "체결 내역·손익 정산과 오늘 매매 복기", 6);
+      yield () => this.deptStatus.finance === "완료";
+    }
+    if (market) {
+      this.report("finance", market.report("settle"));
+      yield 1.8;
+      const reviewer = this.deptAgents("finance").filter((a) => a.rank === "member").at(-1);
+      this.report("finance", market.report("review"), reviewer?.id);
+      yield 1.8;
+    }
     this.pushLog("🧾", market ? `정산 완료 — ${market.summary()}` : "정산 완료", "mint");
 
     // ⑪ 비서실 브리핑
@@ -591,9 +615,15 @@ export class Company {
   private *runDept(deptId: string, label: string, dur: number, report: string) {
     this.startDept(deptId, label, dur);
     yield () => this.deptStatus[deptId] === "완료";
-    const lead = this.agentById.get(DEPT_LEAD[deptId].id);
-    if (lead) this.say(lead, report, 3.2);
+    this.report(deptId, report);
     yield 1.2;
+  }
+
+  /** 팀(기본은 팀장)이 실제 결과를 말풍선과 피드로 보고 */
+  private report(deptId: string, text: string, speakerId = DEPT_LEAD[deptId]?.id) {
+    const agent = speakerId ? this.agentById.get(speakerId) : null;
+    if (agent) this.say(agent, text.length > 34 ? `${text.slice(0, 33)}…` : text, 3.4);
+    this.pushLog(roomOf(deptId).icon, `${agent?.name ?? roomOf(deptId).name}: ${text}`, "mint");
   }
 
   /** 회의: 참석자 소집 → 대사 → 자리 복귀 */
@@ -732,7 +762,7 @@ export class Company {
   // ── 보고 ────────────────────────────────────────────────
   private reportStatus() {
     if (!this.running && !this.dayComplete) {
-      this.pushChat("staff", "김세리", "아직 출근 전이에요. ‘오늘 매매 시작하기’를 눌러주시면 전원 출근해서 자동매매를 돌립니다.");
+      this.pushChat("staff", "김세리", "아직 출근 전이에요. 평일 장이 열리면 전원 출근해서 자동매매를 돌립니다. 장이 닫혀 있을 땐 ‘연습 하루 돌려보기’로 미리 볼 수 있어요.");
       return;
     }
     const working = this.workingDepts();
@@ -872,13 +902,12 @@ export class Company {
         count += 1;
       }
     }
-    this.speed = Math.min(4, this.speed * 2);
     this.pushChat(
       "staff",
       "김세리",
-      count ? `작업 ${count}건 속도 올렸고 배속도 ${this.speed}x로 바꿨습니다.` : `지금 돌아가는 작업이 없어서 배속만 ${this.speed}x로 올렸어요.`,
+      count ? `작업 ${count}건 속도 올렸습니다.` : "지금 돌아가는 작업이 없어요. 재생 속도는 2배속 고정이에요.",
     );
-    this.pushLog("🎤", `대표 지시: 속도 올리기 (${this.speed}x)`, "yellow");
+    this.pushLog("🎤", "대표 지시: 속도 올리기", "yellow");
   }
 
   private cheer() {
@@ -1012,11 +1041,6 @@ export class Company {
 
   togglePause() {
     this.paused = !this.paused;
-  }
-
-  setSpeed(value: number) {
-    this.speed = value;
-    this.turbo = false;
   }
 
   /** 대표가 결정할 일이 생길 때까지(또는 업무 종료까지) 단숨에 건너뛴다 */
