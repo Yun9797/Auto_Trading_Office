@@ -36,8 +36,9 @@ const toMin = (hhmm: string) => {
   const [h, m] = hhmm.split(":").map(Number);
   return h * 60 + m;
 };
-const AUTO_KEY = "auto-start-on";
 const AUTO_DAY_KEY = "auto-start-day";
+const MARKET_OPEN = 9 * 60;
+const MARKET_CLOSE = 15 * 60 + 30;
 
 /** 지금 서울 날짜·시각 */
 function seoulNow() {
@@ -58,8 +59,36 @@ function seoulNow() {
     md,
     weekend: get("weekday") === "Sat" || get("weekday") === "Sun",
     minutes: Number(get("hour")) * 60 + Number(get("minute")),
+    time: `${get("hour")}:${get("minute")}`,
   };
 }
+
+type SeoulNow = ReturnType<typeof seoulNow>;
+
+const isHoliday = (now: SeoulNow) => TRADING.autoStart.holidays.some((h) => h === now.md || h === now.date);
+
+/** 지금 장이 열려 있는지 */
+const marketOpen = (now: SeoulNow) =>
+  !now.weekend && !isHoliday(now) && now.minutes >= MARKET_OPEN && now.minutes < MARKET_CLOSE;
+
+/** 시계 밑에 보여줄 장 상태 */
+function marketStatus(now: SeoulNow) {
+  if (now.weekend) return "휴장 · 주말";
+  if (isHoliday(now)) return "휴장 · 공휴일";
+  if (now.minutes < MARKET_OPEN) return "장 열리기 전 · 09:00 개장";
+  if (now.minutes < MARKET_CLOSE) return "장 열림 · 15:30 마감";
+  return "장 마감";
+}
+
+/** 실제 서울 시각 — 1초마다 갱신 */
+const subscribeClock = (listener: () => void) => {
+  const id = window.setInterval(listener, 1000);
+  return () => window.clearInterval(id);
+};
+const readClock = () => {
+  const now = seoulNow();
+  return `${now.time}|${marketStatus(now)}`;
+};
 
 function readStore(key: string) {
   try {
@@ -75,17 +104,6 @@ function writeStore(key: string, value: string) {
     // 저장이 막힌 브라우저 — 이번 창에서만 기억
   }
 }
-
-/** 자동 출근 ON/OFF — 브라우저에 기억 */
-const autoListeners = new Set<() => void>();
-const subscribeAuto = (listener: () => void) => {
-  autoListeners.add(listener);
-  return () => void autoListeners.delete(listener);
-};
-const setAutoStart = (on: boolean) => {
-  writeStore(AUTO_KEY, on ? "on" : "off");
-  autoListeners.forEach((listener) => listener());
-};
 
 /** 링크만 걸려 있는 항목 (서버 연동과 무관) */
 const integrations2Static = STORAGE_LINK
@@ -137,7 +155,7 @@ export default function Home() {
   const tsnap = useSyncExternalStore(trader.subscribe, trader.getSnapshot, trader.getSnapshot);
   const tradeRunning = tsnap.running;
   const [realConfirmed, setRealConfirmed] = useState(false);
-  const autoStart = useSyncExternalStore(subscribeAuto, () => readStore(AUTO_KEY) !== "off", () => true);
+  const [clockTime, clockStatus] = useSyncExternalStore(subscribeClock, readClock, () => "--:--|").split("|");
 
   useEffect(() => {
     let raf = 0;
@@ -225,7 +243,9 @@ export default function Home() {
       showToast("실전 모드는 자동매매 탭에서 확인 체크를 먼저 해주세요");
       return;
     }
-    const broker = deskMode === "kis" && kis?.configured ? new KisBroker(kis.mode) : new SimBroker();
+    // 장이 열려 있으면 연습 모드도 실제 시각을 따라가고, 장이 닫혀 있으면 빠르게 하루를 돌려 본다
+    const broker =
+      deskMode === "kis" && kis?.configured ? new KisBroker(kis.mode) : new SimBroker({ live: marketOpen(seoulNow()) });
     const next = new AutoTrader(broker);
     next.holdUntilRelease();
     // 트레이딩 데스크의 말 → 사무실 피드·말풍선·대표 지시창
@@ -248,17 +268,15 @@ export default function Home() {
     showToast(`${broker.label} — 전원 출근, 오늘 매매를 시작해요`);
   }, [deskMode, engine, kis, realConfirmed, showToast, snap.running, tradeRunning]);
 
-  // ⏰ 자동 출근 — 평일 정해진 시각이면 알아서 시작 (하루 한 번, 끝나면 정산·브리핑 후 퇴근)
+  // ⏰ 자동 출근 — 장이 열리면 알아서 시작 (하루 한 번, 15:30 장이 닫히면 정산·브리핑 후 퇴근)
   const startDayRef = useRef(startDay);
   useEffect(() => {
     startDayRef.current = startDay;
   }, [startDay]);
   useEffect(() => {
-    if (!autoStart) return;
     const check = () => {
       const now = seoulNow();
-      if (now.weekend || TRADING.autoStart.holidays.some((h) => h === now.md || h === now.date)) return;
-      if (now.minutes < toMin(TRADING.autoStart.time) || now.minutes >= toMin(TRADING.lastBuyTime)) return;
+      if (!marketOpen(now) || now.minutes < toMin(TRADING.autoStart.time) || now.minutes >= toMin(TRADING.lastBuyTime)) return;
       if (readStore(AUTO_DAY_KEY) === now.date || engine.snapshot().running) return;
       writeStore(AUTO_DAY_KEY, now.date);
       if (deskMode === "kis" && kis?.mode === "real" && !realConfirmed) {
@@ -272,7 +290,7 @@ export default function Home() {
     check();
     const id = window.setInterval(check, 20_000);
     return () => window.clearInterval(id);
-  }, [autoStart, deskMode, engine, kis, realConfirmed, showToast]);
+  }, [deskMode, engine, kis, realConfirmed, showToast]);
 
   // 연동 설정 여부를 서버에서 받아온다 (값이 아니라 설정 여부만)
   useEffect(() => {
@@ -405,8 +423,8 @@ export default function Home() {
             onOpenTrading={() => setView("trading")}
             onDuty={onDuty}
             onPublish={() => void sendReport(false)}
-            autoStart={autoStart}
-            setAutoStart={setAutoStart}
+            clockTime={clockTime}
+            clockStatus={clockStatus}
             publishBusy={publishState.busy}
             publishResult={publishState.result}
           />
@@ -459,8 +477,8 @@ function LiveView({
   onPublish,
   publishBusy,
   publishResult,
-  autoStart,
-  setAutoStart,
+  clockTime,
+  clockStatus,
 }: {
   engine: Company;
   snap: Snapshot;
@@ -475,8 +493,8 @@ function LiveView({
   onPublish: () => void;
   publishBusy: boolean;
   publishResult: PublishResult | null;
-  autoStart: boolean;
-  setAutoStart: (on: boolean) => void;
+  clockTime: string;
+  clockStatus: string;
 }) {
   const progress = Math.round((snap.phaseIndex / (PHASES.length - 1)) * 100);
 
@@ -492,8 +510,8 @@ function LiveView({
         </div>
         <div className="live-clock">
           <span>SEOUL</span>
-          <b>{snap.clock}</b>
-          <small>{snap.phase}</small>
+          <b>{clockTime}</b>
+          <small>{clockStatus}</small>
         </div>
       </header>
 
@@ -501,13 +519,12 @@ function LiveView({
         <button className="btn btn-primary" onClick={onStart} disabled={snap.running}>
           {snap.running ? "트레이딩룸 가동 중…" : snap.dayComplete ? "내일 장도 시작하기" : "▶ 오늘 매매 시작하기"}
         </button>
-        <button
-          className={`btn btn-ghost ${autoStart ? "on" : ""}`}
-          onClick={() => setAutoStart(!autoStart)}
-          title={`평일 ${TRADING.autoStart.time}에 이 창이 열려 있으면 알아서 출근하고, 장 마감 정리 후 퇴근해요. 주말·공휴일은 쉬어요.`}
+        <span
+          className="btn btn-ghost on"
+          title="장이 열리면 이 창이 열려 있는 한 알아서 출근하고, 15:30 장이 닫히면 정산 후 퇴근해요. 주말·공휴일은 쉬어요."
         >
-          ⏰ 자동 출근 {autoStart ? `ON · 평일 ${TRADING.autoStart.time}` : "OFF"}
-        </button>
+          ⏰ 자동 출퇴근 · 장 시간 {TRADING.autoStart.time}~15:30
+        </span>
         <button className="btn btn-ghost" onClick={() => engine.togglePause()}>
           {snap.paused ? "▶ 재생" : "⏸ 일시정지"}
         </button>

@@ -270,6 +270,7 @@ export default function TradingDesk({
               <p className="td-empty">시작하면 감시 종목 {TRADING.watchlist.length}개를 분석해요.</p>
             )}
             {snap.skipped.length ? <p className="td-note">분석 못 한 종목: {snap.skipped.join(" / ")}</p> : null}
+            {snap.blocked.length ? <p className="td-note">📰 위험 공시로 오늘 안 사는 종목: {snap.blocked.join(" / ")}</p> : null}
           </div>
         </section>
 

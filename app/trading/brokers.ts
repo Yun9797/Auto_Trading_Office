@@ -64,20 +64,26 @@ const SIM_BASE: Record<string, number> = {
 
 type SimStock = { code: string; name: string; history: Candle[]; open: number; price: number; high: number; low: number; drift: number };
 
+const SIM_MARKET_END = 15 * 60 + 30;
+
 /**
- * 가짜 시장. 08:50부터 한 바퀴에 2분씩 흘러 약 3분 만에 하루 장이 끝난다.
+ * 가짜 시장. 기본은 08:50부터 한 바퀴에 2분씩 흘러 약 3분 만에 하루 장이 끝난다.
+ * live 면 실제 서울 시각을 따라가서 진짜 장 시간(09:00~15:30)과 같이 열리고 닫힌다.
  * 가격은 무작위로 움직이므로 결과는 매번 다르고, 실제 수익을 뜻하지 않는다.
  */
 export class SimBroker implements Broker {
   kind = "sim" as const;
   label = "🧪 연습 모드";
   tickMs = 700;
+  private live: boolean;
   private clock = 8 * 60 + 50;
   private cash: number = TRADING.simCash;
   private held = new Map<string, Holding>();
   private stocks = new Map<string, SimStock>();
 
-  constructor() {
+  constructor({ live = false }: { live?: boolean } = {}) {
+    this.live = live;
+    if (live) this.tickMs = 6_000;
     for (const { code, name } of TRADING.watchlist) {
       let close = SIM_BASE[code] ?? 50_000;
       const trend = (Math.random() - 0.5) * 0.008;
@@ -118,7 +124,12 @@ export class SimBroker implements Broker {
   }
 
   advance() {
-    if (this.clock >= 15 * 60 + 30) return;
+    // live 는 실제 시각까지 2분 단위로 따라잡는다
+    const until = this.live ? Math.min(seoulParts().minutes, SIM_MARKET_END) : this.clock + 2;
+    while (this.clock + 2 <= until && this.clock < SIM_MARKET_END) this.step();
+  }
+
+  private step() {
     this.clock += 2;
     if (this.clock < 9 * 60) return;
     for (const s of this.stocks.values()) {
@@ -146,7 +157,7 @@ export class SimBroker implements Broker {
   }
 
   async order(side: "buy" | "sell", code: string, qty: number): Promise<OrderResult> {
-    if (this.clock < 9 * 60 || this.clock >= 15 * 60 + 30) throw new Error("장 운영 시간이 아니에요");
+    if (this.clock < 9 * 60 || this.clock >= SIM_MARKET_END) throw new Error("장 운영 시간이 아니에요");
     const s = this.stock(code);
     const amount = s.price * qty;
     if (side === "buy") {

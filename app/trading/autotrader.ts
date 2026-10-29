@@ -2,6 +2,7 @@
 // 브라우저 탭이 열려 있는 동안만 돈다. 탭을 닫으면 멈춘다 (보유 종목은 증권사 계좌에 그대로 남는다).
 import { TRADING } from "../../company.config";
 import type { Broker } from "./brokers";
+import { checkDisclosures } from "./disclosures";
 import { analyze, type Signal } from "./strategy";
 
 export type Phase = "대기" | "분석" | "전략" | "개장 대기" | "매매 중" | "정리" | "종료" | "중지" | "오류";
@@ -38,6 +39,8 @@ export type TraderSnapshot = {
   trades: Trade[];
   log: DeskLog[];
   skipped: string[];
+  /** 위험 공시가 나서 오늘 사지 않는 종목 */
+  blocked: string[];
 };
 
 const toMin = (hhmm: string) => {
@@ -73,9 +76,15 @@ export class AutoTrader {
   private traded = new Set<string>();
   /** 원래 계좌에 있던 종목 — 이 프로그램이 산 게 아니므로 절대 팔지 않는다 */
   private untouchable = new Set<string>();
+  /** 위험 공시가 난 종목 — 오늘은 새로 사지 않는다 */
+  private newsBlocked = new Set<string>();
   private positions = new Map<string, Position>();
   private rotate = 0;
   private announced = new Set<string>();
+  /** 오늘 매매를 접은 이유 — 정해지면 15:30 장 마감까지 자리만 지키다 퇴근 */
+  private wrapReason: string | null = null;
+  /** 장 운영 시간에 한 번이라도 돌았는지 */
+  private sawMarket = false;
   /** 사무실 화면과 연결 (말풍선·피드) */
   private onDesk: ((role: DeskRole, text: string, tone: DeskLog["tone"]) => void) | null = null;
 
@@ -117,6 +126,7 @@ export class AutoTrader {
       trades: [],
       log: [],
       skipped: [],
+      blocked: [],
     };
   }
 
@@ -267,8 +277,11 @@ export class AutoTrader {
       }
     }
     signals.sort((a, b) => b.score - a.score);
-    this.update({ signals, skipped, phase: "전략" });
+    this.update({ signals, skipped });
     if (!signals.length) throw new Error("분석할 수 있는 종목이 없어요");
+
+    await this.screenDisclosures();
+    this.update({ phase: "전략" });
 
     const uptrend = signals.filter((s) => s.ma5 > s.ma20);
     this.say(
@@ -286,6 +299,31 @@ export class AutoTrader {
     );
   }
 
+  /** 금융감독원 DART 공시에 위험 단어가 있으면 그 종목은 오늘 사지 않는다 */
+  private async screenDisclosures() {
+    try {
+      const result = await checkDisclosures(TRADING.watchlist.map((s) => s.code));
+      if (!result.configured) {
+        this.say("analyst", "공시 점검은 DART 키가 없어서 건너뛰어요.", "lav");
+        return;
+      }
+      this.newsBlocked = new Set(result.hits.map((h) => h.code));
+      const blocked = result.hits.map((h) => `${h.name}: ${h.title}`);
+      this.update({ blocked });
+      for (const hit of result.hits) {
+        this.say("risk", `${hit.name} 공시 '${hit.title}' (${hit.word}) — 오늘은 사지 않아요.`, "lav");
+      }
+      this.say(
+        "analyst",
+        `공시 점검 끝. 최근 ${TRADING.disclosure.lookbackDays}일 공시 ${result.total}건 중 위험 공시 ${result.hits.length}종목.` +
+          (result.partial ? " (공시가 많아 일부만 확인했어요)" : ""),
+        result.hits.length ? "lav" : "mint",
+      );
+    } catch (error) {
+      this.say("analyst", `공시 점검 실패 — 오늘은 공시 확인 없이 진행해요 (${error instanceof Error ? error.message : String(error)})`, "lav");
+    }
+  }
+
   // ── ③ 매수 · ④ 감시 · ⑤ 매도 ─────────────────────────────
   private async step() {
     this.broker.advance();
@@ -296,11 +334,18 @@ export class AutoTrader {
       this.once("open-wait", () => this.say("trader", "09:00 장이 열리면 바로 감시 들어갑니다.", "lav"));
       return;
     }
-    if (now >= CLOSE_ALL || now >= MARKET_END) {
-      if (!this.snap.trades.length) {
+    if (now >= MARKET_END) {
+      if (!this.sawMarket) {
         this.once("closed", () => this.say("trader", "지금은 장 운영 시간(09:00~15:30)이 아니라 주문을 낼 수 없어요. 평일 장중에 다시 눌러주세요.", "lav"));
       }
-      await this.finish("장 마감 전 정리");
+      await this.finish(this.wrapReason ?? "장 마감");
+      return;
+    }
+    this.sawMarket = true;
+    // 오늘 매매는 접었고, 장이 닫힐 때까지 자리만 지킨다
+    if (this.wrapReason) return;
+    if (now >= CLOSE_ALL) {
+      await this.wrapUp("장 마감 전 정리");
       return;
     }
     this.update({ phase: "매매 중" });
@@ -319,7 +364,7 @@ export class AutoTrader {
     const capital = this.snap.capital;
     if (this.snap.pnlPct <= -TRADING.dailyLossLimitPct) {
       this.say("risk", `오늘 손실 ${pct(this.snap.pnlPct)} — 한도 도달. 전부 팔고 오늘 매매 끝냅니다.`, "lav");
-      await this.finish("손실 한도");
+      await this.wrapUp("손실 한도");
       return;
     }
     if (!this.snap.noNewBuys && (this.snap.realized / capital) * 100 >= TRADING.dailyTargetPct) {
@@ -332,12 +377,17 @@ export class AutoTrader {
     if (canBuy) await this.scanForEntries();
     else if (now > LAST_BUY) this.once("last-buy", () => this.say("strategist", `${TRADING.lastBuyTime} 지나서 새 매수는 끝. 남은 건 감시만 해요.`));
 
-    if (now > LAST_BUY && this.positions.size === 0) await this.finish("더 할 매매 없음");
+    if (now > LAST_BUY && this.positions.size === 0) await this.wrapUp("더 할 매매 없음");
   }
 
   private async scanForEntries() {
     const pool = this.snap.signals.filter(
-      (s) => s.ma5 > s.ma20 && !this.traded.has(s.code) && !this.positions.has(s.code) && !this.untouchable.has(s.code),
+      (s) =>
+        s.ma5 > s.ma20 &&
+        !this.traded.has(s.code) &&
+        !this.positions.has(s.code) &&
+        !this.untouchable.has(s.code) &&
+        !this.newsBlocked.has(s.code),
     );
     if (!pool.length) return;
     // 실제 증권사는 호출 횟수 제한이 있어 한 바퀴에 3종목씩 돌아가며 본다
@@ -411,6 +461,15 @@ export class AutoTrader {
         this.say("trader", `${pos.name} 매도 실패 — 증권사 앱에서 직접 확인해주세요 (${error instanceof Error ? error.message : String(error)})`, "lav");
       }
     }
+  }
+
+  /** 오늘 매매 접기 — 다 팔고 새로 사지 않지만, 퇴근은 15:30 장 마감에 */
+  private async wrapUp(reason: string) {
+    if (this.wrapReason) return;
+    this.wrapReason = reason;
+    this.update({ phase: "정리", noNewBuys: true });
+    if (this.positions.size) await this.liquidate(reason);
+    this.say("trader", `${reason} — 오늘 매매는 여기까지. 15:30 장 마감까지 자리 지키다 퇴근할게요.`, "lav");
   }
 
   // ── ⑥ 정산 ───────────────────────────────────────────────

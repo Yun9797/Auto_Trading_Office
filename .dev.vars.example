@@ -30,3 +30,8 @@ KIS_ACCOUNT_NO=
 KIS_MODE=paper
 # 한 번에 살 수 있는 최대 금액(원). 서버가 이 금액을 넘는 주문은 막습니다.
 KIS_MAX_ORDER_KRW=1000000
+
+# ── 금융감독원 DART (공시 점검, 무료) ──────────────────
+# 비워두면 공시 점검을 건너뜁니다.
+# https://opendart.fss.or.kr → 인증키 신청 (무료, 40자리) → 받은 키를 아래에 붙여넣기
+DART_API_KEY=

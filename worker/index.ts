@@ -3,8 +3,9 @@ import { handleImageOptimization, DEFAULT_DEVICE_SIZES, DEFAULT_IMAGE_SIZES } fr
 import handler from "vinext/server/app-router-entry";
 import { integrationStatus, publishReport, type DayReport, type PublishEnv } from "./report";
 import { handleTrade, type KisEnv } from "./kis";
+import { handleDart, type DartEnv } from "./dart";
 
-interface Env extends PublishEnv, KisEnv {
+interface Env extends PublishEnv, KisEnv, DartEnv {
   ASSETS: Fetcher;
   DB: D1Database;
   IMAGES: {
@@ -51,6 +52,11 @@ const worker = {
     // 트레이딩 데스크 — 한국투자증권 시세·잔고·주문
     if (url.pathname.startsWith("/api/trade/")) {
       return handleTrade(request, env);
+    }
+
+    // 공시 점검 — 금융감독원 DART
+    if (url.pathname.startsWith("/api/dart/")) {
+      return handleDart(request, env);
     }
 
     if (url.pathname === "/_vinext/image") {
