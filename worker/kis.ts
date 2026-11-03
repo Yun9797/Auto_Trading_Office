@@ -68,13 +68,14 @@ async function accessToken(env: KisEnv): Promise<string> {
   return token.value;
 }
 
-// ── 호출 간격 제한 (모의투자는 초당 2건 안팎이라 순서대로 줄 세운다) ──
+// ── 호출 간격 제한 (모의투자는 실제로 초당 1건 남짓이라 순서대로 줄 세운다) ──
+const GAP_MS: Record<Mode, number> = { paper: 1_100, real: 120 };
 let queue: Promise<unknown> = Promise.resolve();
 let lastCall = 0;
 
-function throttled<T>(job: () => Promise<T>): Promise<T> {
+function throttled<T>(mode: Mode, job: () => Promise<T>): Promise<T> {
   const run = queue.then(async () => {
-    const wait = lastCall + 550 - Date.now();
+    const wait = lastCall + GAP_MS[mode] - Date.now();
     if (wait > 0) await new Promise((resolve) => setTimeout(resolve, wait));
     lastCall = Date.now();
     return job();
@@ -91,8 +92,26 @@ async function call(
   trId: string,
   init: { query?: Record<string, string>; body?: Record<string, string> },
 ): Promise<KisResponse> {
-  return throttled(async () => {
-    const mode = modeOf(env);
+  // "초당 거래건수 초과"는 잠깐 기다렸다 다시 하면 대부분 통과한다
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await callOnce(env, path, trId, init);
+    } catch (error) {
+      const busy = error instanceof Error && error.message.includes("초당 거래건수");
+      if (!busy || attempt >= 4) throw error;
+      await new Promise((resolve) => setTimeout(resolve, 1_000 * attempt));
+    }
+  }
+}
+
+async function callOnce(
+  env: KisEnv,
+  path: string,
+  trId: string,
+  init: { query?: Record<string, string>; body?: Record<string, string> },
+): Promise<KisResponse> {
+  const mode = modeOf(env);
+  return throttled(mode, async () => {
     const url = new URL(`${BASE[mode]}${path}`);
     for (const [key, value] of Object.entries(init.query ?? {})) url.searchParams.set(key, value);
 

@@ -1,8 +1,8 @@
 "use client";
 
-import { useSyncExternalStore } from "react";
+import { useMemo, useSyncExternalStore } from "react";
 import { TRADING } from "../../company.config";
-import type { AutoTrader, Phase } from "./autotrader";
+import { parseJournal, readJournalRaw, type AutoTrader, type Phase } from "./autotrader";
 import type { KisStatus } from "./brokers";
 
 export type DeskMode = "sim" | "kis";
@@ -51,6 +51,11 @@ export default function TradingDesk({
   const sells = snap.trades.filter((t) => t.side === "매도");
   const wins = sells.filter((t) => (t.pnl ?? 0) > 0).length;
   const total = snap.realized + snap.unrealized;
+  // 매매 일지 — 모의투자/실전 따로 쌓인다
+  const journalKind = kis?.mode === "real" ? "real" : "paper";
+  const journalRaw = useSyncExternalStore(trader.subscribe, () => readJournalRaw(journalKind), () => "");
+  const journal = useMemo(() => parseJournal(journalRaw), [journalRaw]);
+  const journalTotal = journal.reduce((sum, d) => sum + d.realized, 0);
 
   return (
     <>
@@ -307,6 +312,58 @@ export default function TradingDesk({
             )}
           </div>
         </section>
+      </section>
+
+      <section className="win">
+        <div className="win-bar">
+          <span>📒 journal — {journalKind === "real" ? "실전" : "모의투자"} 매매 일지</span>
+          <span className="window-controls">—　▢　✕</span>
+        </div>
+        <div className="win-body td-scroll">
+          {journal.length ? (
+            <>
+              <p className="td-note td-journal-total">
+                {journal.length}일 기록 · 누적 확정 손익 <b className={journalTotal >= 0 ? "up" : "down"}>{signed(journalTotal)}</b>
+              </p>
+              {journal.map((d) => {
+                const daySells = d.trades.filter((t) => t.side === "매도");
+                const dayWins = daySells.filter((t) => (t.pnl ?? 0) > 0).length;
+                return (
+                  <details key={d.day} className="td-journal-day">
+                    <summary>
+                      <b>
+                        {d.day.slice(0, 4)}.{d.day.slice(4, 6)}.{d.day.slice(6, 8)}
+                      </b>
+                      <span>
+                        거래 {d.trades.length}건 · 매도 승률 {daySells.length ? `${dayWins}/${daySells.length}` : "—"}
+                      </span>
+                      <i className={d.realized >= 0 ? "up" : "down"}>
+                        {signed(d.realized)} ({pct(d.capital ? (d.realized / d.capital) * 100 : 0)})
+                      </i>
+                    </summary>
+                    <ul className="td-trades">
+                      {[...d.trades].reverse().map((t) => (
+                        <li key={t.id}>
+                          <b>{t.time}</b>
+                          <span className={`mini-badge ${t.side === "매수" ? "yellow" : (t.pnl ?? 0) >= 0 ? "mint" : "lav"}`}>{t.side}</span>
+                          <span>
+                            {t.name} {t.qty}주 @ {won(t.price)}
+                            <small>{t.reason}</small>
+                          </span>
+                          {t.pnl !== undefined ? <i className={t.pnl >= 0 ? "up" : "down"}>{signed(t.pnl)}</i> : <i />}
+                        </li>
+                      ))}
+                    </ul>
+                  </details>
+                );
+              })}
+            </>
+          ) : (
+            <p className="td-empty">
+              모의투자·실전에서 거래가 생기면 날짜별로 여기 쌓여요. 껐다 켜도 남아요. (연습 모드는 가짜 시장이라 기록하지 않아요)
+            </p>
+          )}
+        </div>
       </section>
 
       <section className="win td-rules">

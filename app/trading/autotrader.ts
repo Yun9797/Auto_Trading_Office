@@ -64,7 +64,32 @@ type Saved = {
   realized: number;
   traded: string[];
   positions: Position[];
+  trades?: Trade[];
 };
+
+/** 매매 일지 하루치 — 끄고 켜도, 날짜가 바뀌어도 남는다 (실제 증권사만) */
+export type JournalDay = { day: string; capital: number; realized: number; trades: Trade[] };
+
+const JOURNAL_DAYS = 250;
+const journalKey = (kind: string) => `auto-trader:${kind}:journal`;
+
+/** 화면용: 저장된 일지 원문 (바뀌었는지 비교하기 쉽게 문자열 그대로) */
+export function readJournalRaw(kind: string) {
+  try {
+    return localStorage.getItem(journalKey(kind)) ?? "";
+  } catch {
+    return "";
+  }
+}
+
+export function parseJournal(raw: string): JournalDay[] {
+  try {
+    const days = JSON.parse(raw || "[]") as JournalDay[];
+    return Array.isArray(days) ? days : [];
+  } catch {
+    return [];
+  }
+}
 
 export class AutoTrader {
   private broker: Broker;
@@ -242,20 +267,28 @@ export class AutoTrader {
     const closed = this.broker.closedReason();
     if (closed) throw new Error(closed);
     const balance = await this.broker.balance();
-    const restored = this.restore();
-    this.untouchable = new Set(
-      balance.holdings.filter((h) => !restored?.positions.some((p) => p.code === h.code)).map((h) => h.code),
-    );
+    const saved = this.restore();
+    const restored = saved?.day === this.broker.today() ? saved : null;
+    // 지난 날 이 프로그램이 사서 못 판 종목 — 원래 보유가 아니라 이어서 관리한다
+    const carried = restored ? [] : (saved?.positions ?? []).map((p) => ({ ...p, boughtAt: carriedLabel(saved!.day, p.boughtAt) }));
+    const mine = [...(restored?.positions ?? []), ...carried];
+    this.untouchable = new Set(balance.holdings.filter((h) => !mine.some((p) => p.code === h.code)).map((h) => h.code));
+    for (const p of mine) {
+      const held = balance.holdings.find((h) => h.code === p.code);
+      if (held) this.positions.set(p.code, { ...p, qty: Math.min(p.qty, held.qty), last: held.price || p.last });
+    }
 
     if (restored) {
-      for (const p of restored.positions) {
-        const held = balance.holdings.find((h) => h.code === p.code);
-        if (held) this.positions.set(p.code, { ...p, qty: Math.min(p.qty, held.qty), last: held.price || p.last });
-      }
       this.traded = new Set(restored.traded);
-      this.update({ capital: restored.capital, realized: restored.realized, cash: balance.cash });
-      this.say("secretary", `오늘 하던 매매를 이어서 합니다. 관리 중인 종목 ${this.positions.size}개.`, "yellow");
+      const trades = restored.trades ?? [];
+      this.seq = Math.max(this.seq, ...trades.map((t) => t.id + 1));
+      this.update({ capital: restored.capital, realized: restored.realized, cash: balance.cash, trades });
+      this.say("secretary", `오늘 하던 매매를 이어서 합니다. 관리 중인 종목 ${this.positions.size}개, 오늘 거래 ${trades.length}건.`, "yellow");
     } else {
+      if (this.positions.size) {
+        const names = [...this.positions.values()].map((p) => `${p.name} ${p.qty}주`).join(", ");
+        this.say("secretary", `지난번에 못 판 종목 ${this.positions.size}개(${names})를 이어서 관리해요. 익절·손절·마감 정리 규칙 그대로예요.`, "yellow");
+      }
       const capital = Math.min(balance.cash, TRADING.maxPositions * TRADING.maxOrderKRW);
       this.update({ capital, realized: 0, cash: balance.cash, trades: [] });
       this.say("finance", `운용 자금 ${won(capital)}으로 시작합니다. (현금 ${won(balance.cash)} 중 한도까지만)`, "yellow");
@@ -581,19 +614,30 @@ export class AutoTrader {
       realized: this.snap.realized,
       traded: [...this.traded],
       positions: [...this.positions.values()],
+      trades: this.snap.trades,
     };
     try {
       localStorage.setItem(this.storageKey(), JSON.stringify(saved));
+      if (!saved.trades?.length) return;
+      const today: JournalDay = { day: saved.day, capital: saved.capital, realized: saved.realized, trades: this.snap.trades };
+      const days = parseJournal(readJournalRaw(this.broker.kind)).filter((d) => d.day !== today.day);
+      const next = [today, ...days].sort((a, b) => b.day.localeCompare(a.day)).slice(0, JOURNAL_DAYS);
+      localStorage.setItem(journalKey(this.broker.kind), JSON.stringify(next));
     } catch {}
   }
 
+  /** 마지막으로 저장된 상태 (오늘 것이든 지난 날 것이든) */
   private restore(): Saved | null {
     if (this.broker.kind === "sim") return null;
     try {
-      const saved = JSON.parse(localStorage.getItem(this.storageKey()) ?? "null") as Saved | null;
-      return saved && saved.day === this.broker.today() ? saved : null;
+      return JSON.parse(localStorage.getItem(this.storageKey()) ?? "null") as Saved | null;
     } catch {
       return null;
     }
   }
+}
+
+/** "20261030" + "10:12" → "10/30 10:12" */
+function carriedLabel(day: string, time: string) {
+  return time.includes("/") ? time : `${day.slice(4, 6)}/${day.slice(6, 8)} ${time}`;
 }

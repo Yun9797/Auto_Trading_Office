@@ -49,6 +49,12 @@
 .td-trades small { display: block; color: var(--ink-soft); font-size: 10px; }
 .td-trades i { font-style: normal; }
 
+.td-journal-total { margin: 0 0 8px; }
+.td-journal-day { border-bottom: 1px dashed var(--pink-line); }
+.td-journal-day summary { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 0; font-size: 13px; cursor: pointer; }
+.td-journal-day summary i { margin-left: auto; font-style: normal; }
+.td-journal-day .td-trades { padding: 0 0 8px 12px; }
+
 .td-rules ul { display: grid; gap: 8px; margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.5; }
 .td-rules b { margin-right: 6px; }
 
