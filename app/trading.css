@@ -55,6 +55,9 @@
 .td-journal-day summary i { margin-left: auto; font-style: normal; }
 .td-journal-day .td-trades { padding: 0 0 8px 12px; }
 
+.td-opt-head { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 0 0 8px; }
+.td-opt-head .btn:last-child { margin-left: auto; }
+
 .td-rules ul { display: grid; gap: 8px; margin: 0; padding-left: 18px; font-size: 13px; line-height: 1.5; }
 .td-rules b { margin-right: 6px; }
 

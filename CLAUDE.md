@@ -29,6 +29,7 @@
 | 사무실 하루 장면 (매매 진행을 기다리며 장면 전환) | `app/game/sim.ts` → `dayScript()` |
 | 자동매매 엔진 (분석→매수→감시→매도→정산) | `app/trading/autotrader.ts` |
 | 종목 점수·매수 신호 (변동성 돌파 + 이동평균 + RSI) | `app/trading/strategy.ts` |
+| 장 마감 후 매매 규칙 최적화 (K·익절·손절 75조합 시험, 적용은 화면 버튼) | `app/trading/optimizer.ts` |
 | 연습 시장 / 한국투자증권 연결 (브라우저 쪽) | `app/trading/brokers.ts` |
 | 한국투자증권 API 호출 (서버 쪽, 키 보관) | `worker/kis.ts` → `/api/trade/*` |
 | 자동매매 화면 | `app/trading/TradingDesk.tsx`, `app/trading.css` |
@@ -47,6 +48,8 @@
    각 팀은 실제 결과를 보고합니다 — `AutoTrader.report()` (공시·증권사·전략·리스크·정산·복기).
 3. 엔진(`app/game/`, `app/trading/`)은 고쳐도 되지만, 고친 뒤 아래 검증을 꼭 하세요.
 4. 매매 숫자(익절·손절·한도·종목)는 `company.config.ts` 의 `TRADING` 에서만 바꾸세요.
+   예외: 사용자가 최적화 화면에서 "적용"을 누르면 K·익절·손절 3개만 브라우저에 저장된 값이 우선합니다(시험 범위 밖 값은 무시).
+   최적화가 하루 손실 한도·금액 한도·종목을 바꾸게 만들지 마세요. 결과는 자동 적용하지 말고 추천만 하세요.
 
 ### 검증 (고친 뒤 매번)
 

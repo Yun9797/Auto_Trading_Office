@@ -4,6 +4,7 @@ import { TRADING } from "../../company.config";
 import type { ReportTopic } from "../game/sim";
 import type { Broker } from "./brokers";
 import { checkDisclosures } from "./disclosures";
+import { activeRules, describeRules, runOptimization, type Rules } from "./optimizer";
 import { analyze, type Signal } from "./strategy";
 
 export type Phase = "대기" | "분석" | "전략" | "개장 대기" | "매매 중" | "정리" | "종료" | "중지" | "오류";
@@ -107,6 +108,8 @@ export class AutoTrader {
   /** 사무실 팀들이 보고할 실제 결과 (공시·증권사 연결) */
   private notes: Partial<Record<ReportTopic, string>> = {};
   private positions = new Map<string, Position>();
+  /** 오늘 쓰는 K·익절·손절 — 시작할 때 정해지고 하루 동안 안 바뀐다 */
+  private rules: Rules;
   private rotate = 0;
   private announced = new Set<string>();
   /** 오늘 매매를 접은 이유 — 정해지면 15:30 장 마감까지 자리만 지키다 퇴근 */
@@ -118,11 +121,17 @@ export class AutoTrader {
 
   constructor(broker: Broker) {
     this.broker = broker;
+    this.rules = activeRules(broker.kind);
     this.snap = this.blank();
   }
 
   get kind() {
     return this.broker.kind;
+  }
+
+  /** 지금 매매에 쓰는 규칙 (화면 표시용) */
+  get currentRules(): Rules {
+    return this.rules;
   }
 
   subscribe = (listener: () => void) => {
@@ -212,6 +221,7 @@ export class AutoTrader {
   async start() {
     if (this.snap.running) return;
     this.errors = 0;
+    this.rules = activeRules(this.broker.kind);
     this.update({ running: true, phase: "분석", noNewBuys: false });
     try {
       await this.prepare();
@@ -310,7 +320,7 @@ export class AutoTrader {
         if (history.length < 20) throw new Error("일봉이 20일치보다 적음");
         this.history.set(stock.code, history);
         const quote = await this.broker.quote(stock.code);
-        signals.push(analyze(stock, history, quote, TRADING.breakoutK));
+        signals.push(analyze(stock, history, quote, this.rules.breakoutK));
       } catch (error) {
         skipped.push(`${stock.name}: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -330,7 +340,7 @@ export class AutoTrader {
     );
     this.say(
       "strategist",
-      `전략: 변동성 돌파(K=${TRADING.breakoutK}). 상승 추세 종목이 '시가+전일 변동폭×${TRADING.breakoutK}'를 넘으면 매수, +${TRADING.takeProfitPct}% 익절 / -${TRADING.stopLossPct}% 손절, ${TRADING.closeAllTime} 전량 정리.`,
+      `전략: 변동성 돌파(K=${this.rules.breakoutK}). 상승 추세 종목이 '시가+전일 변동폭×${this.rules.breakoutK}'를 넘으면 매수, +${this.rules.takeProfitPct}% 익절 / -${this.rules.stopLossPct}% 손절, ${TRADING.closeAllTime} 전량 정리.`,
     );
     this.say(
       "risk",
@@ -399,8 +409,8 @@ export class AutoTrader {
       const q = await this.broker.quote(pos.code);
       pos.last = q.price;
       const change = (q.price / pos.entry - 1) * 100;
-      if (change >= TRADING.takeProfitPct) await this.sell(pos, `익절 ${pct(change)}`);
-      else if (change <= -TRADING.stopLossPct) await this.sell(pos, `손절 ${pct(change)}`);
+      if (change >= this.rules.takeProfitPct) await this.sell(pos, `익절 ${pct(change)}`);
+      else if (change <= -this.rules.stopLossPct) await this.sell(pos, `손절 ${pct(change)}`);
     }
     this.update({});
 
@@ -444,7 +454,7 @@ export class AutoTrader {
       const history = this.history.get(signal.code);
       if (!history) continue;
       const quote = await this.broker.quote(signal.code);
-      const next = analyze(signal, history, quote, TRADING.breakoutK);
+      const next = analyze(signal, history, quote, this.rules.breakoutK);
       refreshed.set(signal.code, next);
       if (next.decision === "매수") await this.buy(next);
     }
@@ -481,7 +491,7 @@ export class AutoTrader {
     this.record({ side: "매수", code: signal.code, name: signal.name, qty: filled, price: entry, reason: `돌파 매수 · ${result.message}` });
     this.say(
       "risk",
-      `${signal.name} 익절가 ${won(entry * (1 + TRADING.takeProfitPct / 100))} / 손절가 ${won(entry * (1 - TRADING.stopLossPct / 100))} 걸어둘게요.`,
+      `${signal.name} 익절가 ${won(entry * (1 + this.rules.takeProfitPct / 100))} / 손절가 ${won(entry * (1 - this.rules.stopLossPct / 100))} 걸어둘게요.`,
     );
   }
 
@@ -522,6 +532,7 @@ export class AutoTrader {
     this.timer = null;
     this.update({ phase: "정리" });
     if (this.positions.size) await this.liquidate(reason);
+    await this.optimizeRules();
     this.update({ running: false, phase: "종료" });
     const wins = this.snap.trades.filter((t) => t.side === "매도" && (t.pnl ?? 0) > 0).length;
     const sells = this.snap.trades.filter((t) => t.side === "매도").length;
@@ -535,6 +546,30 @@ export class AutoTrader {
           : `대표님, 오늘은 ${pct(this.snap.pnlPct)} 손실로 마감했어요. 손절 규칙대로 지켰습니다.`,
       "yellow",
     );
+  }
+
+  /** 장 마감 후 매매 규칙 최적화 — 결과는 추천만, 적용은 대표가 화면에서 */
+  private async optimizeRules() {
+    if (this.broker.kind === "sim") return;
+    this.say("strategist", "장 마감 후 최근 약 5달 일봉으로 K·익절·손절 조합 75개를 시험해 볼게요. 1분쯤 걸려요.");
+    try {
+      const result = await runOptimization(this.broker.kind);
+      const now = result.current;
+      this.say(
+        "strategist",
+        `지금 규칙(${describeRules(now)}) — 과거 ${now.trades}건, 건당 평균 ${pct(now.avgPct)}, 합계 ${pct(now.totalPct)}.`,
+        "lav",
+      );
+      this.say(
+        "strategist",
+        result.best
+          ? `더 나았던 조합: ${describeRules(result.best)} — ${result.best.trades}건, 건당 ${pct(result.best.avgPct)}, 합계 ${pct(result.best.totalPct)}. 자동매매 화면에서 확인하고 '적용'을 눌러주세요. (과거 성적일 뿐 보장은 아니에요)`
+          : "앞·뒤 기간 모두 지금보다 확실히 나은 조합은 없었어요. 지금 규칙을 유지할게요.",
+        result.best ? "mint" : "lav",
+      );
+    } catch (error) {
+      this.say("strategist", `최적화는 이번엔 건너뛰어요 (${error instanceof Error ? error.message : String(error)})`, "lav");
+    }
   }
 
   /** 오늘 1순위 후보 한 줄 (사무실 회의용) */
@@ -556,7 +591,7 @@ export class AutoTrader {
           .filter((s) => s.ma5 > s.ma20 && !this.newsBlocked.has(s.code) && !this.untouchable.has(s.code))
           .slice(0, 3);
         if (!picks.length) return "오늘은 상승 추세 종목이 없어서 매수 후보가 없어요.";
-        return `후보 ${picks.map((s) => `${s.name} 돌파가 ${won(s.target)}`).join(", ")}. 익절 +${TRADING.takeProfitPct}% / 손절 -${TRADING.stopLossPct}%.`;
+        return `후보 ${picks.map((s) => `${s.name} 돌파가 ${won(s.target)}`).join(", ")}. 익절 +${this.rules.takeProfitPct}% / 손절 -${this.rules.stopLossPct}%.`;
       }
       case "risk": {
         const excluded = this.newsBlocked.size + this.untouchable.size;

@@ -172,6 +172,33 @@ async function daily(env: KisEnv, code: string) {
     .reverse();
 }
 
+/** 기간별 일봉 (오래된 → 최근, 한 번에 최대 100일). 장 마감 후 매매 규칙 최적화용 */
+async function chart(env: KisEnv, code: string, from: string, to: string) {
+  if (!/^\d{8}$/.test(from) || !/^\d{8}$/.test(to)) throw new Error("날짜는 YYYYMMDD 형식이어야 해요");
+  const json = await call(env, "/uapi/domestic-stock/v1/quotations/inquire-daily-itemchartprice", "FHKST03010100", {
+    query: {
+      FID_COND_MRKT_DIV_CODE: "J",
+      FID_INPUT_ISCD: code,
+      FID_INPUT_DATE_1: from,
+      FID_INPUT_DATE_2: to,
+      FID_PERIOD_DIV_CODE: "D",
+      FID_ORG_ADJ_PRC: "0",
+    },
+  });
+  const rows = (json.output2 as Record<string, string>[]) ?? [];
+  return rows
+    .map((r) => ({
+      date: r.stck_bsop_date,
+      open: num(r.stck_oprc),
+      high: num(r.stck_hgpr),
+      low: num(r.stck_lwpr),
+      close: num(r.stck_clpr),
+      volume: num(r.acml_vol),
+    }))
+    .filter((c) => c.date && c.close > 0)
+    .reverse();
+}
+
 async function balance(env: KisEnv) {
   const mode = modeOf(env);
   const json = await call(env, "/uapi/domestic-stock/v1/trading/inquire-balance", TR.balance[mode], {
@@ -253,6 +280,9 @@ export async function handleTrade(request: Request, env: KisEnv): Promise<Respon
     const code = url.searchParams.get("code") ?? "";
     if (action === "quote") return Response.json(await quote(env, code));
     if (action === "daily") return Response.json(await daily(env, code));
+    if (action === "chart") {
+      return Response.json(await chart(env, code, url.searchParams.get("from") ?? "", url.searchParams.get("to") ?? ""));
+    }
     if (action === "balance") return Response.json(await balance(env));
     if (action === "order") {
       if (request.method !== "POST") return new Response("POST only", { status: 405 });

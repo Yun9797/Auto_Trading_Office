@@ -17,7 +17,7 @@ export type Signal = {
 
 const avg = (values: number[]) => values.reduce((sum, v) => sum + v, 0) / Math.max(values.length, 1);
 
-function rsi(closes: number[], period = 14) {
+export function rsi(closes: number[], period = 14) {
   if (closes.length <= period) return 50;
   let gain = 0;
   let loss = 0;

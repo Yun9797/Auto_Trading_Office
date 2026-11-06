@@ -1,8 +1,21 @@
 "use client";
 
-import { useMemo, useSyncExternalStore } from "react";
+import { useMemo, useState, useSyncExternalStore } from "react";
 import { TRADING } from "../../company.config";
 import { parseJournal, readJournalRaw, type AutoTrader, type Phase } from "./autotrader";
+import {
+  activeRules,
+  applyRules,
+  DEFAULT_RULES,
+  describeRules,
+  parseResult,
+  readResultRaw,
+  readRulesRaw,
+  resetRules,
+  runOptimization,
+  subscribeOptimizer,
+  type RuleScore,
+} from "./optimizer";
 import type { KisStatus } from "./brokers";
 
 export type DeskMode = "sim" | "kis";
@@ -56,6 +69,26 @@ export default function TradingDesk({
   const journalRaw = useSyncExternalStore(trader.subscribe, () => readJournalRaw(journalKind), () => "");
   const journal = useMemo(() => parseJournal(journalRaw), [journalRaw]);
   const journalTotal = journal.reduce((sum, d) => sum + d.realized, 0);
+
+  // 매매 규칙 최적화 — 결과·적용한 규칙 모두 모의투자/실전 따로
+  const resultRaw = useSyncExternalStore(subscribeOptimizer, () => readResultRaw(journalKind), () => "");
+  const rulesRaw = useSyncExternalStore(subscribeOptimizer, () => readRulesRaw(journalKind), () => "");
+  const result = useMemo(() => parseResult(resultRaw), [resultRaw]);
+  const tuned = useMemo(() => (rulesRaw ? activeRules(journalKind) : null), [rulesRaw, journalKind]);
+  const [optimizing, setOptimizing] = useState<string | null>(null);
+  const [optimizeError, setOptimizeError] = useState("");
+  // 화면에 보여줄 규칙: 돌고 있으면 오늘 쓰는 것, 아니면 다음에 쓸 것
+  const rules = snap.running ? trader.currentRules : mode === "kis" && tuned ? tuned : DEFAULT_RULES;
+  const kindRules = tuned ?? DEFAULT_RULES;
+  const sameRules = (s: RuleScore) =>
+    s.breakoutK === kindRules.breakoutK && s.takeProfitPct === kindRules.takeProfitPct && s.stopLossPct === kindRules.stopLossPct;
+  const startOptimize = () => {
+    setOptimizeError("");
+    setOptimizing("일봉 받는 중…");
+    runOptimization(journalKind, (done, all) => setOptimizing(`일봉 받는 중… ${done}/${all}`))
+      .catch((error: unknown) => setOptimizeError(error instanceof Error ? error.message : String(error)))
+      .finally(() => setOptimizing(null));
+  };
 
   return (
     <>
@@ -203,8 +236,8 @@ export default function TradingDesk({
                         <td>{won(p.last)}</td>
                         <td className={change >= 0 ? "up" : "down"}>{pct(change)}</td>
                         <td>
-                          {won(p.entry * (1 + TRADING.takeProfitPct / 100))}
-                          <small>{won(p.entry * (1 - TRADING.stopLossPct / 100))}</small>
+                          {won(p.entry * (1 + rules.takeProfitPct / 100))}
+                          <small>{won(p.entry * (1 - rules.stopLossPct / 100))}</small>
                         </td>
                       </tr>
                     );
@@ -366,18 +399,102 @@ export default function TradingDesk({
         </div>
       </section>
 
+      <section className="win">
+        <div className="win-bar">
+          <span>🧪 optimizer — {journalKind === "real" ? "실전" : "모의투자"} 매매 규칙 최적화</span>
+          <span className="window-controls">—　▢　✕</span>
+        </div>
+        <div className="win-body">
+          <p className="td-note td-opt-head">
+            지금 규칙: <b>{describeRules(kindRules)}</b> {tuned ? "(최적화 적용됨)" : "(company.config.ts 기본값)"}
+            {tuned ? (
+              <button className="btn btn-small btn-ghost" onClick={() => resetRules(journalKind)} disabled={snap.running}>
+                기본값으로 되돌리기
+              </button>
+            ) : null}
+            <button
+              className="btn btn-small"
+              onClick={startOptimize}
+              disabled={!kis?.configured || optimizing !== null || snap.running}
+              title={kis?.configured ? "" : "한국투자증권 키가 있어야 진짜 일봉으로 시험할 수 있어요"}
+            >
+              {optimizing ?? "지금 최적화 돌리기"}
+            </button>
+          </p>
+          {optimizeError ? <p className="td-note">최적화 실패: {optimizeError}</p> : null}
+          {result ? (
+            <>
+              <p className="td-note">
+                {result.day.slice(4, 6)}/{result.day.slice(6, 8)} 실행 · {result.stocks}종목 · {result.from.slice(2)}~{result.to.slice(2)} 일봉 · 조합 75개 시험
+              </p>
+              <table className="td-table">
+                <thead>
+                  <tr>
+                    <th>규칙</th>
+                    <th>거래</th>
+                    <th>승률</th>
+                    <th>건당 평균</th>
+                    <th>합계</th>
+                    <th>앞 / 뒤 기간</th>
+                    <th />
+                  </tr>
+                </thead>
+                <tbody>
+                  {[{ ...result.current, label: "지금" }, ...result.top.map((s, i) => ({ ...s, label: `${i + 1}위` }))].map((s) => (
+                    <tr key={s.label}>
+                      <td>
+                        <b>{s.label}</b>
+                        <small>{describeRules(s)}</small>
+                      </td>
+                      <td>{s.trades}</td>
+                      <td>{s.trades ? `${Math.round((s.wins / s.trades) * 100)}%` : "—"}</td>
+                      <td className={s.avgPct >= 0 ? "up" : "down"}>{pct(s.avgPct)}</td>
+                      <td className={s.totalPct >= 0 ? "up" : "down"}>{pct(s.totalPct)}</td>
+                      <td>
+                        {pct(s.firstHalfPct)}
+                        <small>{pct(s.secondHalfPct)}</small>
+                      </td>
+                      <td>
+                        {s.label !== "지금" && result.best && describeRules(s) === describeRules(result.best) && !sameRules(s) ? (
+                          <button className="btn btn-small btn-primary" onClick={() => applyRules(journalKind, s)} disabled={snap.running}>
+                            적용
+                          </button>
+                        ) : sameRules(s) && s.label !== "지금" ? (
+                          <span className="status-pill done">사용 중</span>
+                        ) : null}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <p className="td-note">
+                {result.best
+                  ? `추천: ${describeRules(result.best)} — 앞·뒤 기간 모두 수익이었고 지금 규칙보다 합계가 높았어요.`
+                  : "앞·뒤 기간 모두 수익이면서 지금보다 나은 조합이 없어서 추천하지 않아요. 지금 규칙 유지."}{" "}
+                ⚠️ 일봉으로 어림잡은 과거 성적이에요(하루 안 가격 순서를 가정해서 실제보다 좋게 나올 수 있어요). 앞으로도 같다는 보장은 없어요. 적용하면 다음
+                &quot;매매 시작&quot;부터 쓰이고, 하루 손실 한도·금액 한도는 그대로예요.
+              </p>
+            </>
+          ) : (
+            <p className="td-empty">
+              장이 끝나면 자동으로 최근 약 5달 일봉으로 K·익절·손절 조합 75개를 시험해서 여기 보여줘요. 바로 해보려면 &quot;지금 최적화 돌리기&quot;.
+            </p>
+          )}
+        </div>
+      </section>
+
       <section className="win td-rules">
         <div className="win-bar">
-          <span>🛡️ rules — 매매 규칙 (company.config.ts 에서 변경)</span>
+          <span>🛡️ rules — 매매 규칙 (company.config.ts 에서 변경{tuned && mode === "kis" ? " · K·익절·손절은 최적화 값" : ""})</span>
           <span className="window-controls">—　▢　✕</span>
         </div>
         <div className="win-body">
           <ul>
             <li>
-              <b>사는 조건</b> 5일선 &gt; 20일선(상승 추세) + 오늘 가격이 &quot;시가 + 어제 변동폭 × {TRADING.breakoutK}&quot; 돌파 + RSI 75 미만
+              <b>사는 조건</b> 5일선 &gt; 20일선(상승 추세) + 오늘 가격이 &quot;시가 + 어제 변동폭 × {rules.breakoutK}&quot; 돌파 + RSI 75 미만
             </li>
             <li>
-              <b>파는 조건</b> +{TRADING.takeProfitPct}% 익절 · -{TRADING.stopLossPct}% 손절 · {TRADING.closeAllTime} 남은 것 전부 매도
+              <b>파는 조건</b> +{rules.takeProfitPct}% 익절 · -{rules.stopLossPct}% 손절 · {TRADING.closeAllTime} 남은 것 전부 매도
             </li>
             <li>
               <b>하루 한도</b> 확정 수익 +{TRADING.dailyTargetPct}% 면 새 매수 중단 · 손실 -{TRADING.dailyLossLimitPct}% 면 전부 팔고 종료
